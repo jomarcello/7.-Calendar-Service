@@ -14,6 +14,7 @@ from google.generativeai.types import HarmCategory, HarmBlockThreshold
 from playwright_stealth import stealth_async  # Voeg stealth toe
 import random
 from fastapi.responses import HTMLResponse
+from urllib.parse import urlparse
 
 # Setup logging
 logging.basicConfig(level=logging.DEBUG)
@@ -26,26 +27,39 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Initialize OpenAI client met de juiste key
-client = AsyncOpenAI(
-    api_key=os.getenv("OPENAI_API_KEY"),
-    timeout=60.0
-)
+# Initialize OpenAI client met fallback
+try:
+    client = AsyncOpenAI(
+        api_key=os.getenv("OPENAI_API_KEY"),
+        timeout=60.0
+    )
+except Exception as e:
+    logger.warning(f"Failed to initialize OpenAI client: {e}")
+    client = None
 
 # Initialize Redis client with betere error handling
 try:
-    redis_host = os.getenv("REDIS_HOST", "redis")  # Default naar service naam
-    redis_port = os.getenv("REDIS_PORT", "6379")   # Als string
-    
-    logger.info(f"🔄 Initialiseren Redis connectie: {redis_host}:{redis_port}")
-    
-    redis_client = redis.Redis(
-        host=redis_host,
-        port=int(redis_port),  # Expliciet naar int converteren
-        db=0,
-        socket_connect_timeout=5,
-        decode_responses=True
-    )
+    redis_url = os.getenv("REDIS_URL")  # Railway Redis URL
+    if redis_url:
+        # Parse Redis URL
+        url = urlparse(redis_url)
+        
+        redis_client = redis.Redis(
+            host=url.hostname,
+            port=url.port,
+            username=url.username,
+            password=url.password,
+            decode_responses=True,
+            socket_connect_timeout=5
+        )
+    else:
+        # Fallback naar lokale Redis
+        redis_client = redis.Redis(
+            host=os.getenv("REDIS_HOST", "redis"),
+            port=int(os.getenv("REDIS_PORT", "6379")),
+            decode_responses=True,
+            socket_connect_timeout=5
+        )
     
     # Test de connectie
     redis_client.ping()
@@ -53,7 +67,6 @@ try:
     
 except Exception as e:
     logger.error(f"❌ Redis verbinding mislukt: {str(e)}")
-    logger.error(f"Redis config: host={redis_host}, port={redis_port}")
     redis_client = None
 
 # Initialize Gemini
